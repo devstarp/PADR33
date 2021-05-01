@@ -75,7 +75,7 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
     fun openBT() {
         val uuid: UUID =
             UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") //Standard SerialPortService ID
-        mmSocket = mmDevice!!.createRfcommSocketToServiceRecord(uuid)
+        mmSocket = mmDevice!!.createInsecureRfcommSocketToServiceRecord(uuid)
         mmSocket!!.connect()
         mmOutputStream = mmSocket!!.outputStream
         mmInputStream = mmSocket!!.inputStream
@@ -233,7 +233,7 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
         buttonmono.setOnTouchListener(this)
         buttondim.setOnTouchListener(this)
         buttonmute.setOnTouchListener(this)
-        buttontbm.setOnTouchListener(OnTouchListener { v, event ->
+        buttontbm.setOnTouchListener(OnTouchListener { _, event ->
             clickSerial(9,event)
             true
         })
