@@ -9,4 +9,6 @@
     <color name="ledGreen">#76FF03</color>
     <color name="ledPink">#FF1744</color>
     <color name="ledBlue">#2979FF</color>
+    <color name="transparent">#00000000</color>
+
 </resources>

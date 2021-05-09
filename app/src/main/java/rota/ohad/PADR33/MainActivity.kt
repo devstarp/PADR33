@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.Intent
+import android.content.res.Resources
 import android.os.Bundle
 import android.os.Handler
 import android.util.Log
@@ -11,9 +12,15 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.View.OnTouchListener
+import android.view.animation.AlphaAnimation
+import android.view.animation.Animation
+import android.widget.AdapterView
+import android.widget.LinearLayout
+import android.widget.RelativeLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import kotlinx.android.synthetic.main.activity_main.*
 import rota.ohad.PADR33.RotaryKnobView.RotaryKnobListener
 import java.io.IOException
@@ -21,12 +28,11 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.charset.Charset
 import java.util.*
-import java.util.concurrent.ScheduledThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
+import kotlin.collections.ArrayList
 
 
-class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, View.OnTouchListener , RotaryKnobListener{
+class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, OnTouchListener , RotaryKnobListener ,  AdapterView.OnItemSelectedListener{
     private var mBluetoothAdapter: BluetoothAdapter? = null
     private var mmSocket: BluetoothSocket? = null
     private var mmDevice: BluetoothDevice? = null
@@ -35,18 +41,68 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
     private var workerThread: Thread? = null
     private lateinit var readBuffer: ByteArray
     private var readBufferPosition = 0
-    private var serials = IntArray(23){0}
+    private  var serials = IntArray(24){0}
     private var sendSerials = IntArray(23){0}
-
     private var degreeListener : RotationDegreeListener ?= null
     private var mDetector: GestureDetector? = null
-
+    private lateinit var pairedDevices: Set<BluetoothDevice>
+    private val btDevicesNames = ArrayList<String>()
+    private var knobState = 0
+    private var viewId: Int? = null
+    private var menuId: Int? = null
+    private var shortClick = false
     @Volatile
     private var stopWorker = false
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        mDetector = GestureDetector(this, this)
+        buttonina.setOnTouchListener(this)
+        buttoninb.setOnTouchListener(this)
+        buttoninc.setOnTouchListener(this)
+        buttonouta.setOnTouchListener(this)
+        buttonoutb.setOnTouchListener(this)
+        buttonoutc.setOnTouchListener(this)
+        buttonmono.setOnTouchListener(this)
+        buttondim.setOnTouchListener(this)
+        buttonmute.setOnTouchListener(this)
+        tkboffstate.setOnTouchListener(this)
+        tkbdimstate.setOnTouchListener(this)
+        tkbmutestate.setOnTouchListener(this)
+        dimsetupmenutest.setOnTouchListener(this)
+        tkbmenutext.setOnTouchListener(this)
+        exitmenutext.setOnTouchListener(this)
+        buttontbm.setOnTouchListener(OnTouchListener { _, event ->
+            clickSerial(9,event)
+            true
+        })
+
+
+        knob.listener = this
+        degreeListener = knob
+//        var tempArrays  = ArrayList<String>()
+//        tempArrays.add("1")
+//        tempArrays.add("1")
+//        tempArrays.add("1")
+//        val btDeviceNamesAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, tempArrays)
+//        btDeviceNamesAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+//        bluetooth_menu.adapter = btDeviceNamesAdapter
+//        bluetooth_menu.onItemSelectedListener = this
+        setSerials("<0,0,0,0,0,0,0,0,1,0,0,-127,0,1,0,0,80,0,0,1,0,1,0,20,>")
+        findBT()
+        if (mmDevice!==null) openBT()
+
+        showSerial()
+    }
+    override fun onDestroy() {
+        super.onDestroy()
+        closeBT()
+    }
+
     private fun findBT() {
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-        var deviceName: String?=null
         if (mBluetoothAdapter == null) {
             Toast.makeText(this,"No bluetooth adapter available", Toast.LENGTH_SHORT).show()
             return
@@ -55,38 +111,34 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             startActivityForResult(enableBtIntent, 0)
         }
-        val pairedDevices: Set<BluetoothDevice>? = mBluetoothAdapter?.bondedDevices
-        pairedDevices?.forEach { device ->
-            deviceName = device.name
-            val deviceHardwareAddress = device.address // MAC address
-        }
-        if (pairedDevices?.size!! > 0) {
-            for (device in pairedDevices) {
-                if (device.name == deviceName) {
-                    mmDevice = device
-                    Toast.makeText(this,device.name+"Found", Toast.LENGTH_SHORT).show()
-                    break
-                }
-            }
-        }
-    }
 
+        pairedDevices = mBluetoothAdapter!!.bondedDevices
+
+        Toast.makeText(this,"Select the Bluetooth Device", Toast.LENGTH_SHORT).show()
+        if (!this::pairedDevices.isInitialized) return
+        pairedDevices.forEach { device -> mmDevice=device }
+//        val btDeviceNamesAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, btDevicesNames)
+//        btDeviceNamesAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+//        bluetooth_menu.adapter = btDeviceNamesAdapter
+//        bluetooth_menu.onItemSelectedListener = this
+//        bluetooth_menu.visibility=View.VISIBLE
+
+    }
     @Throws(IOException::class)
     fun openBT() {
         val uuid: UUID =
-            UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") //Standard SerialPortService ID
+                UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") //Standard SerialPortService ID
         mmSocket = mmDevice!!.createInsecureRfcommSocketToServiceRecord(uuid)
         mmSocket!!.connect()
         mmOutputStream = mmSocket!!.outputStream
         mmInputStream = mmSocket!!.inputStream
         beginListenForData()
-        Toast.makeText(this,"Rota's MacBook Air Opened", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this,mmDevice!!.name.toString()+" Connected", Toast.LENGTH_SHORT).show()
     }
-
     @Throws(IOException::class)
     fun sendData() {
         var data = ""
-        for(i in 0..10){
+        for(i in 0..14){
             data += if (i==22){
                 sendSerials[i].toString()
             }else {
@@ -94,8 +146,7 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
             }
         }
         data = "<$data>"
-        Log.e("serial",data)
-
+        Log.e("outgoing serials", data.toString())
         mmOutputStream?.write(data.toByteArray())
     }
     @Throws(IOException::class)
@@ -104,7 +155,6 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
         mmOutputStream!!.close();
         mmInputStream!!.close();
         mmSocket!!.close();
-//    myLabel.setText("Bluetooth Closed");
     }
     private fun beginListenForData() {
         val handler = Handler()
@@ -123,16 +173,16 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
                             val b = packetBytes[i]
                             if (b == delimiter) {
                                 val encodedBytes =
-                                    ByteArray(readBufferPosition)
+                                        ByteArray(readBufferPosition)
                                 System.arraycopy(
-                                    readBuffer,
-                                    0,
-                                    encodedBytes,
-                                    0,
-                                    encodedBytes.size
+                                        readBuffer,
+                                        0,
+                                        encodedBytes,
+                                        0,
+                                        encodedBytes.size
                                 )
                                 val characterSet =
-                                    Charset.forName("US-ASCII")
+                                        Charset.forName("US-ASCII")
                                 val data = encodedBytes.toString(characterSet)
                                 readBufferPosition = 0
                                 handler.post(Runnable {
@@ -154,7 +204,7 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
     }
 
     private fun setSerials(data: String){
-        var regexPattern = "<([0,1],){10}((-)?(\\d){1,3},){3}([0,1],){10}>"
+        val regexPattern = "<([0,1],){10}((-)?(\\d){1,3},){3}([0,1],){3}((\\d){1,3},)([0,1],){3}([0,1,2,3],)([0,1],)([0,1,2,3],)((\\d){1,2},)>"
         val isMatch: Boolean = Pattern.matches(regexPattern, data)
         if (!isMatch) {
             Toast.makeText(this, "Wrong Serial Data Type", Toast.LENGTH_SHORT).show()
@@ -165,17 +215,16 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
             Toast.makeText(this, "Wrong Serial Data Type", Toast.LENGTH_SHORT).show()
             return
         }
+        serials = IntArray(list.size)
         for (i in list.indices) {
             serials[i] = list[i].toInt()
         }
     }
-
     private fun showSerial(){
         ledsHandle()
         lcdView()
-        dbView()
+        knobView()
     }
-
     private fun ledsHandle(){
         var ledColor : Int = if(serials[0]==1) {ContextCompat.getColor(this, R.color.ledOrange)}else{
             ContextCompat.getColor(this, R.color.ledBlack)
@@ -219,83 +268,6 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
         ledtb.setBackgroundColor(ledColor)
 
     }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        mDetector = GestureDetector(this, this)
-        buttonina.setOnTouchListener(this)
-        buttoninb.setOnTouchListener(this)
-        buttoninc.setOnTouchListener(this)
-        buttonouta.setOnTouchListener(this)
-        buttonoutb.setOnTouchListener(this)
-        buttonoutc.setOnTouchListener(this)
-        buttonmono.setOnTouchListener(this)
-        buttondim.setOnTouchListener(this)
-        buttonmute.setOnTouchListener(this)
-        buttontbm.setOnTouchListener(OnTouchListener { _, event ->
-            clickSerial(9,event)
-            true
-        })
-        ledsHandle()
-        knob.listener = this
-        degreeListener = knob
-        setSerials("<0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,>")
-        findBT()
-        if (mmDevice!==null) openBT()
-        showSerial()
-    }
-    override fun onRotate(value: Int) {
-        textdbvalue.text = value.toString()
-
-        if (value == -127){
-            textdbvalue.text  = "-∞";
-            textdb.text ="";
-        }else{
-            textdb.text ="DB";
-        }
-        sendSerials[10]=value
-        sendData()
-    }
-
-//    fun outputLedControl(position:Int){
-//        for(val index in (0...2) )
-//    }
-    private var blinkCount = 0
-    private val executor: ScheduledThreadPoolExecutor = ScheduledThreadPoolExecutor(1)
-
-    private fun startScheduler() {
-        executor.scheduleAtFixedRate({ //DO YOUR THINGS
-            textdim.visibility =  if(textdim.visibility == View.VISIBLE) {View.INVISIBLE}else{View.VISIBLE}
-            Log.e("schedule",blinkCount.toString())
-            blinkCount++
-        }, 10, 300, TimeUnit.MILLISECONDS)
-    }
-
-
-    private fun stopScheduler() {
-        textdim.visibility = View.INVISIBLE
-        blinkCount = 0
-    }
-    private var carousalTimer: Timer? = null
-    private var visible = View.VISIBLE
-    private fun startTimer() {
-        carousalTimer = Timer() // At this line a new Thread will be created
-        Log.e("schedule",carousalTimer.toString())
-
-        carousalTimer!!.scheduleAtFixedRate(object : TimerTask() {
-            override fun run() {
-                visible =  if(visible == View.VISIBLE) {View.INVISIBLE} else {View.VISIBLE}
-                Log.e("schedule",visible.toString())
-                blinkCount++
-                if(blinkCount>=8) { stopTimer() }
-            }
-        }, 0, 500) // delay
-    }
-
-    fun stopTimer() {
-        carousalTimer!!.cancel()
-    }
     private fun lcdView(){
         var textInput =""
         if(serials[0]==1) textInput += 'A'
@@ -307,68 +279,165 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
         if(serials[4]==1) textOutput += 'B'
         if(serials[5]==1) textOutput += 'C'
         outputstest.text = textOutput
-        if(serials[6]==1) {
-            textmono.visibility = View.VISIBLE
-        }else{
-            textmono.visibility = View.INVISIBLE
-        }
-        if(serials[7] ==1) {
-            textdim.visibility = View.VISIBLE
-        }else{
-            textdim.visibility = View.INVISIBLE
-        }
-        if(serials[17]==1) {
-//            startScheduler()
-//            if(blinkCount>=6) {
-//                stopScheduler()
-//            }
-            Log.e("schedule","start")
-            startScheduler()
-            textdim.visibility = visible
-        }
-        if(serials[18]==1) {
-            mutetext.visibility = View.VISIBLE
-        }else{
-            mutetext.visibility = View.INVISIBLE
-        }
-        if(serials[8]==1) {
-            mutetext.visibility = View.VISIBLE
-            textdbvalue.visibility = View.INVISIBLE
-            textdb.visibility = View.INVISIBLE
-        }else{
-            mutetext.visibility = View.INVISIBLE
-            textdbvalue.visibility = View.VISIBLE
-            textdb.visibility = View.VISIBLE
-        }
-        if(serials[13]==1) {
-            muteltext.visibility = View.VISIBLE
-        }else{
-            muteltext.visibility = View.INVISIBLE
-        }
-        if(serials[14]==1) {
-            mutertext.visibility = View.VISIBLE
-        }else{
-            mutertext.visibility = View.INVISIBLE
-        }
-        lastdbtest.text = serials[11].toString()
-        lastdbtest.visibility =View.VISIBLE
-        lastdimdb.visibility =View.VISIBLE
-//         if(serials[11]) {
-//             lastdbtest.visibility =View.VISIBLE
-//        }else{
-//             lastdbtest.visibility =View.INVISIBLE
-//        }
-        lastdimdb.text = serials[12].toString()
-}
+        textmono.visibility = if(serials[6]==1) View.VISIBLE else View.INVISIBLE
+        textdim.visibility = if(serials[7]==1) View.VISIBLE else View.INVISIBLE
+        mutetext.visibility = if(serials[8]==1) View.VISIBLE else View.INVISIBLE
+        muteltext.visibility = if(serials[13]==1) View.VISIBLE else View.INVISIBLE
+        mutertext.visibility = if(serials[14]==1) View.VISIBLE else View.INVISIBLE
+        dbValueText.visibility = if(serials[8]==1 || serials[13] == 1 || serials[14] == 1) View.INVISIBLE else View.VISIBLE
+        lastdbValue.visibility = if(serials[8]==1 || serials[13] == 1 || serials[14] == 1) View.INVISIBLE else View.VISIBLE
 
-    private  fun dbView(){
+        val animBlinkingEffect: Animation = AlphaAnimation(0.0f, 1.0f)
+        animBlinkingEffect.duration = 300 //You can manage the blinking time with this parameter
+        animBlinkingEffect.startOffset = 20
+        animBlinkingEffect.repeatMode = Animation.REVERSE
+        animBlinkingEffect.repeatCount = 4
+        if(serials[17]==1) textdim.startAnimation(animBlinkingEffect)
+        if(serials[18]==1) mutetext.startAnimation(animBlinkingEffect)
+        if(serials[19]==1) {
+            knobState = if(serials[15]==1) {
+                dimMenuShow()
+                2
+            }else{ if (serials[21]==1) {
+                tbkMenuShow()
+                4
+            } else{
+                mainMenuShow()
+                3
+            }
+            }
+        }else{
+            knobState =  if( serials[13] == 1 || serials[14] == 1) {
+                muteMenuShow()
+                1
+            } else {
+
+                if(serials[8]==1) {
+                    muteMenuShow()
+                    5
+                }else {
+                    defaultMenuShow()
+                    0
+                }
+            }
+        }
+        mainMenuSelected(serials[20])
+        tbkMenuSelected(serials[22])
         textdbvalue.text = serials[10].toString()
-        Log.e("knob",knob.knobDrawable.toString())
-        degreeListener?.onValueChange(serials[10])
+
+        if (serials[11] == -127) lastdbtest.text  = "-∞" else  lastdbtest.text = serials[11].toString()
+        lastdimdb.text = serials[12].toString()
+        setupdimdbtest.text = serials[16].toString()
+
+    }
+    private fun knobView(){
+        degreeListener?.onValueTypeChange(knobState)
+        when(knobState){
+            0->{
+                degreeListener?.onValueChange(serials[10])
+            }
+            1->{
+                degreeListener?.onValueChange(serials[23])
+            }
+            2->{
+                degreeListener?.onValueChange(serials[16])
+            }
+            3->{
+                degreeListener?.onValueChange(serials[20])
+            }
+            4->{
+                degreeListener?.onValueChange(serials[22])
+            }
+            5->{
+                degreeListener?.disableRotate()
+            }
+        }
     }
 
-    //  Buttons actions
+    private fun muteMenuShow(){
+        muteMenu.visibility=View.VISIBLE
+        mainMenu.visibility=View.INVISIBLE
+        defaultMenu.visibility=View.INVISIBLE
+        dimSetupMenu.visibility=View.INVISIBLE
+        tbkSetupMenu.visibility=View.INVISIBLE
+    }
+    private fun mainMenuShow(){
+        muteMenu.visibility=View.INVISIBLE
+        mainMenu.visibility=View.VISIBLE
+        defaultMenu.visibility=View.INVISIBLE
+        dimSetupMenu.visibility=View.INVISIBLE
+        tbkSetupMenu.visibility=View.INVISIBLE
+    }
+    private fun dimMenuShow(){
+        muteMenu.visibility=View.INVISIBLE
+        mainMenu.visibility=View.INVISIBLE
+        defaultMenu.visibility=View.INVISIBLE
+        dimSetupMenu.visibility=View.VISIBLE
+        tbkSetupMenu.visibility=View.INVISIBLE
+    }
+    private fun tbkMenuShow(){
+        muteMenu.visibility=View.INVISIBLE
+        mainMenu.visibility=View.INVISIBLE
+        defaultMenu.visibility=View.INVISIBLE
+        dimSetupMenu.visibility=View.INVISIBLE
+        tbkSetupMenu.visibility=View.VISIBLE
+    }
+    private fun defaultMenuShow(){
+        muteMenu.visibility=View.INVISIBLE
+        mainMenu.visibility=View.INVISIBLE
+        defaultMenu.visibility=View.VISIBLE
+        dimSetupMenu.visibility=View.INVISIBLE
+        tbkSetupMenu.visibility=View.INVISIBLE
+    }
+    private fun mainMenuSelected(position: Int){
+        when(position){
+            0->{
+                dimsetupmenutest.background = ContextCompat.getDrawable(this, R.drawable.menu_no_border)
+                tkbmenutext.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+                exitmenutext.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+            }
+            1-> {
+                dimsetupmenutest.background = ContextCompat.getDrawable(this, R.drawable.menu_border)
+                tkbmenutext.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+                exitmenutext.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+            }
+            2->{
+                dimsetupmenutest.background = ContextCompat.getDrawable(this, R.drawable.menu_no_border)
+                tkbmenutext.background = ContextCompat.getDrawable(this,R.drawable.menu_border)
+                exitmenutext.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+            }
+            3->{
+                dimsetupmenutest.background = ContextCompat.getDrawable(this, R.drawable.menu_no_border)
+                tkbmenutext.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+                exitmenutext.background = ContextCompat.getDrawable(this,R.drawable.menu_border)
+            }
+        }
+    }
+    private fun tbkMenuSelected(position: Int){
+        when(position){
+            0-> {
+                tkboffstate.background = ContextCompat.getDrawable(this, R.drawable.menu_no_border)
+                tkbdimstate.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+                tkbmutestate.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+            }
+            1-> {
+                tkboffstate.background = ContextCompat.getDrawable(this, R.drawable.menu_border)
+                tkbdimstate.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+                tkbmutestate.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+            }
+            2->{
+                tkboffstate.background = ContextCompat.getDrawable(this, R.drawable.menu_no_border)
+                tkbdimstate.background = ContextCompat.getDrawable(this,R.drawable.menu_border)
+                tkbmutestate.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+            }
+            3->{
+                tkboffstate.background = ContextCompat.getDrawable(this, R.drawable.menu_no_border)
+                tkbdimstate.background = ContextCompat.getDrawable(this,R.drawable.menu_no_border)
+                tkbmutestate.background = ContextCompat.getDrawable(this,R.drawable.menu_border)
+            }
+        }
 
+    }
 
     fun buttontbl(view: View) {
         Toast.makeText(this,"TKB", Toast.LENGTH_SHORT).show()
@@ -380,43 +449,53 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
         sendData()
     }
 
-    override fun onRotateStop(value: Int) {
-//        textdbvalue.text = value.toString()
-//
-//        if (value == -127){
-//            textdbvalue.text  = "-∞";
-//            textdb.text ="";
-//        }else{
-//            textdb.text ="DB";
-//        }
-//        serials[10]=value
-//        Toast.makeText(this,"rotate stoped", Toast.LENGTH_SHORT).show()
-//
-//        sendData()
-    }
-
     private fun clickSerial(index:Int, event: MotionEvent?){
         when (event?.action) {
             MotionEvent.ACTION_DOWN -> if (!shortClick) {
                 shortClick = true
                 sendSerials[index] = 1
                 sendData()
-
             }
-
             MotionEvent.ACTION_UP -> {
                 sendSerials[index] = 0
                 sendData()
                 shortClick = false
             }
-
         }
     }
-    private var viewId: Int? = null
-    private var shortClick = false
-    private var longClick = false
-    private var eventStartTime : Long? =null
-    private var eventEndTime : Long? =null
+
+    override fun onRotate(value: Int) {
+        textdbvalue.text = value.toString()
+        if (value == -127){
+            textdbvalue.text  = "-∞";
+            textdb.visibility=View.INVISIBLE
+        }else{
+            textdb.visibility=View.VISIBLE
+        }
+
+        setupdimdbtest.text = value.toString()
+        mainMenuSelected(value)
+        tbkMenuSelected(value)
+        when(knobState){
+            0->{
+                sendSerials[10] = value
+            }
+            1->{
+                sendSerials[11] = value
+            }
+            2->{
+                sendSerials[12] = value
+            }
+            3->{
+                sendSerials[13] = value
+            }
+            4->{
+                sendSerials[14] = value
+            }
+        }
+        sendData()
+    }
+
     override fun onTouch(view: View?, event: MotionEvent?): Boolean {
         when (view) {
             buttonina -> { viewId = 0 }
@@ -428,6 +507,31 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
             buttonmono -> { viewId = 6 }
             buttondim -> { viewId = 7 }
             buttonmute -> { viewId = 8 }
+            dimsetupmenutest -> {
+                viewId = 13
+                menuId =1
+            }
+            tkbmenutext -> {
+                viewId = 13
+                menuId =2
+            }
+            exitmenutext -> {
+                viewId = 13
+                menuId =3
+            }
+            tkboffstate -> {
+                viewId = 14
+                menuId =1
+            }
+            tkbdimstate -> {
+                viewId = 14
+                menuId =2
+            }
+            tkbmutestate -> {
+                viewId = 14
+                menuId = 3
+            }
+
         }
 
         return mDetector!!.onTouchEvent(event)
@@ -435,42 +539,45 @@ class MainActivity : AppCompatActivity() ,GestureDetector.OnGestureListener, Vie
 
     override fun onShowPress(p0: MotionEvent?) {
     }
-
     override fun onSingleTapUp(p0: MotionEvent?): Boolean {
-        sendSerials[viewId!!]=1
-        sendData()
-        sendSerials[viewId!!]=0
-        sendData()
-        return true
-    }
-
-    override fun onDown(p0: MotionEvent?): Boolean {
-        return true
-    }
-
-    override fun onFling(p0: MotionEvent?, p1: MotionEvent?, p2: Float, p3: Float): Boolean {
-        return true
-    }
-
-    override fun onScroll(p0: MotionEvent?, p1: MotionEvent?, p2: Float, p3: Float): Boolean {
-        return true
-    }
-
-    override fun onLongPress(p0: MotionEvent?) {
-        if(viewId!=9) {
-            sendSerials[viewId!!] = 2
+        if (viewId!! <= 8) {
+            sendSerials[viewId!!] = 1
             sendData()
             sendSerials[viewId!!] = 0
             sendData()
         }else{
-            sendSerials[viewId!!] = 1
+            sendSerials[viewId!!] = menuId!!
+            sendData()
+        }
+        return true
+    }
+    override fun onDown(p0: MotionEvent?): Boolean {
+        return true
+    }
+    override fun onFling(p0: MotionEvent?, p1: MotionEvent?, p2: Float, p3: Float): Boolean {
+        return true
+    }
+    override fun onScroll(p0: MotionEvent?, p1: MotionEvent?, p2: Float, p3: Float): Boolean {
+        return true
+    }
+    override fun onLongPress(p0: MotionEvent?) {
+        if(viewId!! !in 3..6) {
+            sendSerials[viewId!!] = 2
             sendData()
             sendSerials[viewId!!] = 0
             sendData()
         }
     }
 
+    override fun onNothingSelected(p0: AdapterView<*>?) {}
+    override fun onItemSelected(parent: AdapterView<*>, view: View?, position: Int, id: Long) {
+//        Log.e("spinner",position.toString())
+//        if (!this::pairedDevices.isInitialized) return
+//        mmDevice = pairedDevices.elementAt(position)
+//        if (mmDevice!==null) openBT()
+    }
 }
+
 
 
 

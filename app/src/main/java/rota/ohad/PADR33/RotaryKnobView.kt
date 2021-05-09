@@ -1,16 +1,20 @@
 package rota.ohad.PADR33
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.VectorDrawable
 import android.util.AttributeSet
-import android.util.DisplayMetrics
 import android.util.Log
 import android.view.GestureDetector
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.widget.ImageView.ScaleType
 import android.widget.RelativeLayout
+import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.GestureDetectorCompat
 import kotlinx.android.synthetic.main.rotary_knob_view.view.*
 import kotlin.math.atan2
@@ -24,12 +28,12 @@ class RotaryKnobView @JvmOverloads constructor(
     private var minValue = 0
     var listener: RotaryKnobListener? = null
     var value = 130
+    var prevValue = value
     var knobDrawable: Drawable? = null
-    private var divider = 300f / (maxValue - minValue)
-
+    private var divider : Float
+    private var disable = true
     interface RotaryKnobListener {
         fun onRotate(value: Int)
-        fun onRotateStop(value: Int)
     }
 
     init {
@@ -37,6 +41,7 @@ class RotaryKnobView @JvmOverloads constructor(
 
         LayoutInflater.from(context)
             .inflate(R.layout.rotary_knob_view, this, true)
+
 
         context.theme.obtainStyledAttributes(
             attrs,
@@ -51,12 +56,24 @@ class RotaryKnobView @JvmOverloads constructor(
                 value = getInt(R.styleable.RotaryKnobView_initialValue, 50)
                 knobDrawable = getDrawable(R.styleable.RotaryKnobView_knobDrawable)
                 knobImageView.setImageDrawable(knobDrawable)
-//                onValueChange(-70)
             } finally {
                 recycle()
             }
         }
         gestureDetector = GestureDetectorCompat(context, this)
+    }
+    private fun setKnobImage() {
+        val knobVDrawable =
+            ContextCompat.getDrawable(context, R.drawable.ic_rotary_knob)
+        val knobBmp = Bitmap.createBitmap(
+            100,
+            100,
+            Bitmap.Config.ARGB_8888
+        )
+        val canvas = Canvas(knobBmp)
+        knobVDrawable!!.setBounds(0, 0, canvas.width, canvas.height)
+        knobVDrawable.draw(canvas)
+        knobImageView.setImageBitmap(knobBmp)
     }
 
     /**
@@ -64,33 +81,86 @@ class RotaryKnobView @JvmOverloads constructor(
      * We calculate the polar angle (Theta) from these coordinates and use these to animate the
      * knob movement and calculate the value
      */
+    private var switchState = false
     override fun onScroll(e1: MotionEvent, e2: MotionEvent, distanceX: Float, distanceY: Float)
             : Boolean {
-
-        val rotationDegrees = calculateAngle(e2.x, e2.y)
+        if(!disable) return false
+        var rotationDegrees = calculateAngle(e2.x, e2.y)
         // use only -150 to 150 range (knob min/max points
-        if (rotationDegrees >= -150 && rotationDegrees <= 150) {
+        if(rotationDegrees >= 150) rotationDegrees = 150f
+        if(rotationDegrees <= -150) rotationDegrees = -150f
 //            setKnobPosition(rotationDegrees)
-            // Calculate rotary value
-            // The range is the 300 degrees between -150 and 150, so we'll add 150 to adjust the
-            // range to 0 - 300
-            var valueRangeDegrees = rotationDegrees + 150
-
-                value = ((valueRangeDegrees / divider) + minValue).toInt()
-            onValueChange(value)
-
-            if (listener != null) listener!!.onRotate(value)
+        // Calculate rotary value
+        // The range is the 300 degrees between -150 and 150, so we'll add 150 to adjust the
+        // range to 0 - 300
+        val valueRangeDegrees = rotationDegrees + 150
+        if (switchState) {
+            when(valueRangeDegrees.toInt()){
+                in 0..100 -> value =1
+                in 100..200 -> value =2
+                in 200..300 -> value =3
+            }
+            setKnobPosition(rotationDegrees)
+            if (prevValue != value) {
+                if (listener != null) listener!!.onRotate(value)
+                prevValue = value
+            }
+        }else {
+            value = ((valueRangeDegrees / divider) + minValue).toInt()
+            if (prevValue != value) {
+                if (listener != null) listener!!.onRotate(value)
+                onValueChange(value)
+                prevValue = value
+            }
         }
-
         return true
     }
-    override fun onValueChange(value:Int){
-        val rotationDegrees = (value-minValue)*divider-150
+    override fun onValueChange( v:Int ){
+        if (switchState) value = v
+        val rotationDegrees = (v - minValue) * divider - 150
         setKnobPosition(rotationDegrees)
     }
-    fun convertDpToPx (dp: Float, context: Context): Float {
-        return dp * (context.resources.displayMetrics.densityDpi.toFloat() / DisplayMetrics.DENSITY_DEFAULT)
+
+    override fun onValueTypeChange(valueType: Int) {
+        when(valueType){
+            0->{
+                switchState = false
+                maxValue = 0
+                minValue = -127
+                divider = 300f / (maxValue - minValue)
+            }
+            1->{
+                switchState = false
+                maxValue = 20
+                minValue = 0
+                divider = 300f / (maxValue - minValue)
+            }
+            2->{
+                switchState = false
+                maxValue = 127
+                minValue = 0
+                divider = 300f / (maxValue - minValue)
+            }
+            3->{
+                switchState = true
+                maxValue = 3
+                minValue = 1
+                divider = 300f / (maxValue - minValue)
+            }
+            4->{
+                switchState = true
+                maxValue = 3
+                minValue = 1
+                divider = 300f / (maxValue - minValue)
+            }
+        }
     }
+
+    override fun disableRotate() {
+        disable = false
+    }
+
+
     /**
      * Calculate the angle from x,y coordinates of the touch event
      * The 0,0 coordinates in android are the top left corner of the view.
@@ -129,6 +199,7 @@ class RotaryKnobView @JvmOverloads constructor(
     private fun setKnobPosition(deg: Float) {
         val matrix = Matrix()
         knobImageView.scaleType = ScaleType.MATRIX
+
         matrix.postRotate(deg, convertDpToPx(200f,context)/ 2, convertDpToPx(200f,context)/ 2)
         knobImageView.imageMatrix = matrix
     }
@@ -148,31 +219,24 @@ class RotaryKnobView @JvmOverloads constructor(
     }
 
     override fun onSingleTapUp(event: MotionEvent): Boolean {
+        if (!switchState) return false
+        val rotationDegrees = calculateAngle(event.x, event.y)
+        // use only -150 to 150 range (knob min/max points
+        if (rotationDegrees >= -150 && rotationDegrees <= 150) {
+            val valueRangeDegrees = rotationDegrees + 150
+            Log.e("Degree",valueRangeDegrees.toString())
 
+            if (listener != null) listener!!.onRotate(value)
+        }
         return true
     }
 
     override fun onFling(arg0: MotionEvent, arg1: MotionEvent, arg2: Float, arg3: Float)
             : Boolean {
-
-        val rotationDegrees = calculateAngle(arg1.x, arg1.y)
-        // use only -150 to 150 range (knob min/max points
-        if (rotationDegrees >= -150 && rotationDegrees <= 150) {
-            setKnobPosition(rotationDegrees)
-
-            // Calculate rotary value
-            // The range is the 300 degrees between -150 and 150, so we'll add 150 to adjust the
-            // range to 0 - 300
-            val valueRangeDegrees = rotationDegrees + 150
-            value = ((valueRangeDegrees / divider) + minValue).toInt()
-            Log.e("motionevent", value.toString())
-            if (listener != null) listener!!.onRotateStop(value)
-        }
-        return true
+        return false
     }
 
     override fun onLongPress(e: MotionEvent) {
-        Log.e("longPress",e.action.toString())
     }
 
     override fun onShowPress(e: MotionEvent) {}
